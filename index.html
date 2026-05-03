@@ -203,7 +203,6 @@
         window.addEventListener('hashchange', router); window.addEventListener('load', router);
 
         function router() {
-            // Global cleanup
             clearTimeout(typewriterTimeout);
             clearInterval(globalTimerInterval);
             
@@ -258,7 +257,7 @@
                     container.innerHTML += (char === '\n') ? '<br>' : char;
                     i++;
                     if(i % 3 === 0 && audioCtx) SFX.type(); 
-                    let speed = Math.random() * 10 + 2; // Super fast typing
+                    let speed = Math.random() * 10 + 2; 
                     if (char === '.' || char === '?' || char === '!') speed += 150;
                     if (char === ',') speed += 80;
                     typewriterTimeout = setTimeout(typeWriter, speed);
@@ -298,10 +297,10 @@
             app.innerHTML = `
                 <div class="flex flex-col h-[100dvh] overflow-hidden">
                     <!-- Top Bar -->
-                    <div class="px-6 py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
-                        <button onclick="navigate('#')" class="font-mono text-sm tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors">← Abort</button>
-                        <h2 class="font-inter-tight font-bold text-foreground tracking-tight uppercase">Deploy Payload</h2>
-                        <div class="w-16"></div>
+                    <div class="px-4 py-3 md:px-6 md:py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
+                        <button onclick="navigate('#')" class="font-mono text-sm tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors shrink-0 mr-4">← Abort</button>
+                        <h2 class="font-inter-tight font-bold text-foreground tracking-tight uppercase truncate min-w-0 flex-1 text-right md:text-center">Deploy Payload</h2>
+                        <div class="w-16 shrink-0 hidden md:block"></div>
                     </div>
                     
                     <!-- Split Layout -->
@@ -336,9 +335,9 @@
                     </div>
                     
                     <!-- Share Overlay -->
-                    <div id="share-overlay" class="hidden absolute inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-                        <div class="max-w-xl w-full p-10 border border-border bg-card shadow-2xl">
-                            <h3 class="font-inter-tight text-4xl font-bold mb-2 text-accent uppercase tracking-tight">Armed & Ready</h3>
+                    <div id="share-overlay" class="hidden absolute inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div class="max-w-xl w-full p-8 md:p-10 border border-border bg-card shadow-2xl">
+                            <h3 class="font-inter-tight text-3xl md:text-4xl font-bold mb-2 text-accent uppercase tracking-tight">Armed & Ready</h3>
                             <p class="font-mono text-sm text-muted-foreground mb-8">Transmit this secure link to the agency.</p>
                             <input type="text" id="share-url" readonly class="w-full h-12 bg-input border border-border px-4 text-xs text-muted-foreground mb-6 select-all font-mono focus:outline-none focus:border-accent">
                             <div class="flex flex-col sm:flex-row gap-4">
@@ -420,9 +419,9 @@
             app.innerHTML = `
                 <div class="flex flex-col h-[100dvh] overflow-hidden">
                     <!-- Top Bar -->
-                    <div class="px-6 py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
-                        <h2 class="font-inter-tight font-bold text-muted-foreground tracking-tight uppercase">CELL: <span class="text-foreground">${gameData.name}</span></h2>
-                        <div class="font-mono text-sm font-bold tracking-widest flex gap-4 md:gap-6">
+                    <div class="px-4 py-3 md:px-6 md:py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
+                        <h2 class="font-inter-tight font-bold text-muted-foreground tracking-tight uppercase truncate min-w-0 flex-1 pr-4">CELL: <span class="text-foreground">${gameData.name}</span></h2>
+                        <div class="font-mono text-sm font-bold tracking-widest flex gap-4 md:gap-6 shrink-0 justify-end">
                             <span class="text-accent" id="countdown-timer">T-${timeRemaining}s</span>
                             <span class="text-muted-foreground hidden md:inline">SCANS: <span id="attempts-left" class="text-foreground">${gameState.maxAttempts}</span></span>
                         </div>
@@ -433,7 +432,7 @@
                         <!-- Map Container -->
                         <div id="map-play" class="w-full h-1/2 md:h-full md:flex-grow z-0 cursor-crosshair shrink-0 md:shrink"></div>
                         
-                        <!-- Toast (Responsive Position) -->
+                        <!-- Toast -->
                         <div id="toast" class="absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 opacity-0 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap"></div>
 
                         <!-- Telemetry Panel -->
@@ -475,176 +474,4 @@
                 else if (type === "warning") t.className = `absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap bg-warning text-background border-warning`;
                 else t.className = `absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap bg-muted text-foreground border-border`;
                 t.style.opacity = '1'; setTimeout(() => t.style.opacity = '0', 2500);
-            }
-
-            // Centralized strict timer logic
-            globalTimerInterval = setInterval(() => {
-                if(gameState.finished) { clearInterval(globalTimerInterval); return; }
-                
-                timeRemaining--;
-                const tmr = document.getElementById('countdown-timer');
-                tmr.innerText = `T-${timeRemaining}s`;
-                
-                if(timeRemaining <= 10 && timeRemaining > 0) { tmr.classList.replace('text-accent', 'text-detonated'); SFX.click(); }
-                
-                if (timeRemaining <= 0) {
-                    clearInterval(globalTimerInterval);
-                    endGame(false, getBestDistance(), "TIME EXPIRED");
-                }
-            }, 1000);
-
-            document.getElementById('triangulate-btn').addEventListener('click', (e) => {
-                SFX.click();
-                if (triangulationsLeft > 0 && !gameState.finished) {
-                    triangulationArmed = true;
-                    e.target.innerText = "ARMED: SELECT MAP TARGET";
-                    e.target.classList.add('bg-accent', 'text-background'); e.target.classList.remove('text-accent', 'hover:bg-accent', 'hover:text-background');
-                }
-            });
-
-            map.on('click', function(e) {
-                if (gameState.finished) return;
-                
-                const gLat = e.latlng.lat; const gLng = e.latlng.lng;
-                const trueDist = greatCircleDistanceKm(gLat, gLng, gameState.secret.lat, gameState.secret.lng);
-                const latencyMs = Math.round(CONFIG.LATENCY_BASE_MS + (trueDist * CONFIG.LATENCY_PER_KM_MS));
-                
-                const hud = document.getElementById('hud-overlay');
-                document.getElementById('hud-text').innerText = `TRANSMITTING PING... EST ${latencyMs}ms`;
-                hud.classList.remove('hidden');
-                SFX.ping();
-
-                setTimeout(() => {
-                    hud.classList.add('hidden');
-                    processGuess(gLat, gLng, trueDist);
-                }, latencyMs);
-            });
-
-            function processGuess(gLat, gLng, trueDist) {
-                if (gameState.finished) return; // strict guard
-
-                let isSuperScan = triangulationArmed; triangulationArmed = false; 
-                if (isSuperScan) triangulationsLeft--;
-
-                const isDegraded = trueDist > CONFIG.HEMISPHERE_THRESHOLD_KM;
-                let activeNoise = T_RULES.noisePct * (isDegraded ? CONFIG.HEMISPHERE_NOISE_MULT : 1);
-                let noisyDist = Math.max(0, trueDist + ((Math.random() * 2 - 1) * (trueDist * activeNoise))); 
-
-                let comparison = "---"; let isDefused = trueDist <= T_RULES.defuseKm; 
-                if (gameState.guesses.length > 0) {
-                    const prevDist = gameState.guesses[gameState.guesses.length-1].trueDist;
-                    if (trueDist < prevDist) comparison = "CLOSER"; else if (trueDist > prevDist) comparison = "FARTHER";
-                }
-
-                gameState.guesses.push({ lat: gLat, lng: gLng, trueDist: trueDist, displayedDist: noisyDist, comparison, isDefused, isDegraded });
-                L.circleMarker([gLat, gLng], { radius: 2, fillColor: isSuperScan ? "#FF3D00" : "#FAFAFA", color: "#0A0A0A", weight: 1, fillOpacity: 1 }).addTo(map);
-
-                if (isDegraded) { SFX.click(); showToast(`DEGRADED SIGNAL: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "warning"); }
-                else if (isSuperScan) {
-                    let radar = L.circle([gLat, gLng], { radius: noisyDist * 1000, color: "#FF3D00", weight: 2, fillColor: "#FF3D00", fillOpacity: 0.08, dashArray: "4, 8" }).addTo(map);
-                    SFX.superScan(); showToast(`SUPER SCAN: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "super");
-                    setTimeout(() => { if(map.hasLayer(radar)) map.removeLayer(radar); }, T_RULES.superFadeMs);
-                } else {
-                    SFX.click(); showToast(`SCAN: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "normal");
-                }
-
-                updateGameUI();
-            }
-
-            function updateGameUI() {
-                if (gameState.finished) return;
-
-                const historyEl = document.getElementById('history-panel');
-                const awaitText = document.getElementById('awaiting-text');
-                if (awaitText) awaitText.style.display = 'none';
-                document.getElementById('attempts-left').innerText = gameState.maxAttempts - gameState.guesses.length;
-                
-                const tBtn = document.getElementById('triangulate-btn');
-                if (triangulationsLeft > 0) {
-                    tBtn.className = "w-full uppercase tracking-wider font-semibold border border-accent text-accent px-4 py-3 text-xs transition-colors duration-150 hover:bg-accent hover:text-background active:translate-y-px";
-                    tBtn.innerText = `DEPLOY TRIANGULATION [${triangulationsLeft} LEFT]`;
-                } else {
-                    tBtn.disabled = true; tBtn.className = "w-full uppercase tracking-wider font-semibold border border-border text-muted-foreground px-4 py-3 text-xs opacity-50";
-                    tBtn.innerText = `TRIANGULATIONS DEPLETED`;
-                }
-                
-                const latest = gameState.guesses[gameState.guesses.length - 1];
-                const index = String(gameState.guesses.length).padStart(2, '0');
-                const row = document.createElement('div');
-                row.className = "py-4 border-b border-border flex justify-between items-end font-mono text-sm";
-                row.innerHTML = `
-                    <div class="flex flex-col gap-1">
-                        <span class="text-xs ${latest.isDegraded ? 'text-warning' : 'text-muted-foreground'} tracking-widest">SCAN ${index} ${latest.isDegraded ? '[DEGRADED]' : ''}</span>
-                        <span class="text-foreground text-lg">~${latest.displayedDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM</span>
-                    </div>
-                    <span class="font-bold tracking-widest ${latest.isDefused ? 'text-defused' : 'text-muted-foreground'}">${latest.comparison}</span>
-                `;
-                document.getElementById('status-container').after(row);
-                historyEl.scrollTop = 0; 
-
-                // Strict end condition check
-                if (latest.isDefused) endGame(true, latest.trueDist, "TARGET SECURED");
-                else if (gameState.guesses.length >= gameState.maxAttempts) endGame(false, getBestDistance(), "SCANS DEPLETED");
-            }
-
-            function getBestDistance() { return gameState.guesses.length === 0 ? 0 : Math.min(...gameState.guesses.map(g => g.trueDist)); }
-
-            function endGame(won, bestDist, reason) {
-                if (gameState.finished) return; // Idempotency guard
-                gameState.finished = true; 
-                clearInterval(globalTimerInterval);
-                
-                document.getElementById('triangulate-btn').disabled = true;
-                const flash = document.getElementById('flash-overlay');
-                
-                if (won) {
-                    SFX.success();
-                    flash.className = "pointer-events-none fixed inset-0 z-[100] transition-opacity duration-1000 bg-defused/30 opacity-100";
-                    setTimeout(() => flash.classList.replace('opacity-100', 'opacity-0'), 100);
-
-                    let pulse = L.circle([gameState.secret.lat, gameState.secret.lng], { radius: 1000, color: "#22c55e", weight: 3, fillColor: "#22c55e", fillOpacity: 0.6 }).addTo(resultLayer);
-                    let pRad = 1000; let pAnim = setInterval(() => {
-                        pRad += 1000; pulse.setRadius(pRad); pulse.setStyle({ opacity: Math.max(0, 1 - pRad/40000), fillOpacity: Math.max(0, 0.6 - pRad/40000) });
-                        if(pRad > 40000) clearInterval(pAnim);
-                    }, 30);
-
-                    document.getElementById('status-container').innerHTML = `
-                        <div class="mb-6 p-6 border border-defused bg-defused/10">
-                            <h2 class="font-inter-tight text-3xl font-bold mb-2 text-defused uppercase tracking-tighter leading-none">Payload Defused</h2>
-                            <p class="font-mono text-xs text-defused mb-6 uppercase tracking-widest leading-relaxed opacity-80">${reason}.<br>Threat neutralized in ${String(gameState.guesses.length).padStart(2, '0')} scans.</p>
-                            <button onclick="navigate('#')" class="w-full uppercase tracking-wider font-semibold bg-defused text-background px-4 py-3 active:translate-y-px text-xs hover:bg-white transition-colors">Return Base</button>
-                        </div>
-                    `;
-                } else {
-                    SFX.explode();
-                    flash.className = "pointer-events-none fixed inset-0 z-[100] transition-opacity duration-1000 bg-detonated/40 opacity-100";
-                    setTimeout(() => flash.classList.replace('opacity-100', 'opacity-0'), 100);
-
-                    let blast = L.circle([gameState.secret.lat, gameState.secret.lng], { radius: 1000, color: "#ef4444", weight: 0, fillColor: "#ef4444", fillOpacity: 0.8 }).addTo(resultLayer);
-                    let bRad = 1000; let bAnim = setInterval(() => {
-                        bRad += 20000; blast.setRadius(bRad); blast.setStyle({ fillOpacity: Math.max(0, 0.8 - bRad/1000000) });
-                        if(bRad > 1000000) clearInterval(bAnim);
-                    }, 30);
-
-                    L.circleMarker([gameState.secret.lat, gameState.secret.lng], { radius: 5, fillColor: "#ef4444", color: "#0A0A0A", weight: 2, fillOpacity: 1 }).addTo(resultLayer);
-
-                    document.getElementById('status-container').innerHTML = `
-                        <div class="mb-6 p-6 border border-detonated bg-detonated/10">
-                            <h2 class="font-inter-tight text-3xl font-bold mb-2 text-detonated uppercase tracking-tighter leading-none">Detonation</h2>
-                            <p class="font-mono text-xs text-detonated mb-6 uppercase tracking-widest leading-relaxed opacity-80">${reason}.<br>Best true distance: ${bestDist.toLocaleString(undefined, {maximumFractionDigits:1})} KM.</p>
-                            <button onclick="navigate('#')" class="w-full uppercase tracking-wider font-semibold bg-detonated text-background px-4 py-3 active:translate-y-px text-xs hover:bg-white transition-colors">Return Base</button>
-                        </div>
-                    `;
-                }
-
-                if (gameState.guesses.length > 0) {
-                    let bestGuess = gameState.guesses.reduce((prev, curr) => (prev.trueDist < curr.trueDist) ? prev : curr);
-                    let geoPoints = getGeodesicPoints(bestGuess.lat, bestGuess.lng, gameState.secret.lat, gameState.secret.lng);
-                    L.polyline(geoPoints, { color: won ? '#22c55e' : '#ef4444', dashArray: '4, 4', weight: 2, opacity: 0.8 }).addTo(resultLayer);
-                    map.fitBounds(L.latLngBounds([ [bestGuess.lat, bestGuess.lng], [gameState.secret.lat, gameState.secret.lng] ]), { padding: [30, 30], maxZoom: 10 });
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+            
