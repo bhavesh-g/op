@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPERATION: PAYLOAD</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        background: '#0A0A0A',
+                        foreground: '#FAFAFA',
+                        muted: '#1A1A1A',
+                        'muted-foreground': '#737373',
+                        accent: '#FF3D00',
+                        border: '#262626',
+                        input: '#1A1A1A',
+                        card: '#0F0F0F',
+                        defused: '#22c55e',
+                        detonated: '#ef4444',
+                        warning: '#eab308'
+                    },
+                    fontFamily: {
+                        'inter-tight': ['"Inter Tight"', 'sans-serif'],
+                        'inter': ['Inter', 'sans-serif'],
+                        'mono': ['"JetBrains Mono"', 'monospace'],
+                    },
+                    letterSpacing: {
+                        tighter: '-0.06em', tight: '-0.04em', normal: '-0.01em', wide: '0.05em', wider: '0.1em', widest: '0.2em',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <style>
+        body { 
+            background-color: #0A0A0A; color: #FAFAFA; 
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+        }
+        .leaflet-container { background: #0A0A0A !important; font-family: 'JetBrains Mono', monospace; }
+        .leaflet-layer { filter: grayscale(100%) contrast(120%) brightness(80%); }
+        .leaflet-control-attribution { filter: grayscale(100%) invert(100%); background: transparent !important; color: #737373 !important; }
+        .leaflet-bar { border: 1px solid #262626 !important; border-radius: 0 !important; box-shadow: none !important; }
+        .leaflet-bar a { background-color: #1A1A1A !important; color: #FAFAFA !important; border-bottom: 1px solid #262626 !important; font-weight: bold; border-radius: 0 !important; }
+        .leaflet-bar a:hover { background-color: #FAFAFA !important; color: #0A0A0A !important; }
+        .leaflet-bar a.leaflet-disabled { background-color: #0A0A0A !important; color: #262626 !important; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #262626; }
+        ::-webkit-scrollbar-thumb:hover { background: #737373; }
+        * { border-radius: 0 !important; }
+        
+        .typing-cursor::after { content: '█'; animation: blink 1s step-start infinite; color: #FF3D00; margin-left: 4px; }
+        @keyframes blink { 50% { opacity: 0; } }
+    </style>
+</head>
+<body class="font-inter min-h-screen flex flex-col overflow-x-hidden selection:bg-accent selection:text-background">
+    
+    <div id="flash-overlay" class="pointer-events-none fixed inset-0 z-[100] opacity-0 transition-opacity duration-1000"></div>
+    <div id="app" class="flex-grow flex flex-col w-full h-[100dvh] relative z-10"></div>
+
+    <script>
+        /*******************************************************
+         * 0. GAME CONFIGURATION
+         *******************************************************/
+        const CONFIG = {
+            EARTH_RADIUS_KM: 6371,
+            LATENCY_BASE_MS: 300, LATENCY_PER_KM_MS: 0.12,
+            HEMISPHERE_THRESHOLD_KM: 10000, HEMISPHERE_NOISE_MULT: 3.0,
+            THREATS: {
+                EASY: { label: "DEFCON 3 (EASY)", attempts: 15, defuseKm: 50, noisePct: 0.00, superScans: 3, superFadeMs: 10000, timeSec: 120 },
+                NORMAL: { label: "DEFCON 2 (NORMAL)", attempts: 10, defuseKm: 5, noisePct: 0.015, superScans: 2, superFadeMs: 5000, timeSec: 60 },
+                HARDCORE: { label: "DEFCON 1 (HARDCORE)", attempts: 5, defuseKm: 0.5, noisePct: 0.04, superScans: 1, superFadeMs: 2000, timeSec: 30 }
+            }
+        };
+
+        // Global State & Cleanups
+        let typewriterTimeout = null;
+        let globalTimerInterval = null;
+
+        /*******************************************************
+         * 1. SYNTHESIZED SOUND ENGINE (Web Audio API)
+         *******************************************************/
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+        
+        const SFX = {
+            init: () => { if (!audioCtx) audioCtx = new AudioCtx(); if (audioCtx.state === 'suspended') audioCtx.resume(); },
+            playTone: (freq, type, duration, vol=0.1) => {
+                if(!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + duration);
+            },
+            type: () => SFX.playTone(1200, 'square', 0.05, 0.01),
+            click: () => SFX.playTone(600, 'sine', 0.1, 0.05),
+            ping: () => {
+                SFX.playTone(1200, 'sine', 1.5, 0.2); 
+                setTimeout(() => SFX.playTone(600, 'sine', 1.0, 0.05), 150); // Echo
+            },
+            superScan: () => {
+                if(!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 1.5);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 1.5);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + 1.5);
+            },
+            explode: () => {
+                if(!audioCtx) return;
+                const bufferSize = audioCtx.sampleRate * 2;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for(let i=0; i<bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                const noise = audioCtx.createBufferSource(); noise.buffer = buffer;
+                const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 2);
+                const gain = audioCtx.createGain(); gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 2);
+                noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+                noise.start();
+            },
+            success: () => {
+                SFX.playTone(523.25, 'sine', 0.5, 0.1); // C5
+                setTimeout(() => SFX.playTone(659.25, 'sine', 0.5, 0.1), 150); // E5
+                setTimeout(() => SFX.playTone(783.99, 'sine', 1.0, 0.1), 300); // G5
+                setTimeout(() => SFX.playTone(1046.50, 'sine', 2.0, 0.2), 450); // C6
+            }
+        };
+
+        /*******************************************************
+         * 2. CRYPTO & GEO UTILITIES
+         *******************************************************/
+        const SECRET_KEY_PHRASE = "map-duel-fixed-secret-key-123456789";
+        async function getCryptoKey() {
+            const enc = new TextEncoder();
+            const hash = await crypto.subtle.digest("SHA-256", enc.encode(SECRET_KEY_PHRASE));
+            return crypto.subtle.importKey("raw", hash, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+        }
+        function toBase64Url(u8) { let s=''; for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''); }
+        function fromBase64Url(b64url) { let b64=b64url.replace(/-/g,'+').replace(/_/g,'/'); while(b64.length%4)b64+='='; let s=atob(b64); let b=new Uint8Array(s.length); for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i); return b; }
+        async function encryptPayload(payload) {
+            const key = await getCryptoKey(); const iv = crypto.getRandomValues(new Uint8Array(12));
+            const pt = new TextEncoder().encode(JSON.stringify(payload));
+            const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, pt);
+            const combined = new Uint8Array(iv.length + ct.byteLength);
+            combined.set(iv); combined.set(new Uint8Array(ct), iv.length);
+            return toBase64Url(combined);
+        }
+        async function decryptPayload(token) {
+            const key = await getCryptoKey(); const combined = fromBase64Url(token);
+            const iv = combined.slice(0, 12); const ct = combined.slice(12);
+            const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+            return JSON.parse(new TextDecoder().decode(pt));
+        }
+
+        function greatCircleDistanceKm(lat1, lon1, lat2, lon2) {
+            const R = CONFIG.EARTH_RADIUS_KM; const dLat = (lat2 - lat1)*Math.PI/180; const dLon = (lon2 - lon1)*Math.PI/180;
+            const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+        function getGeodesicPoints(lat1, lon1, lat2, lon2, numPoints = 50) {
+            const points = []; const d = greatCircleDistanceKm(lat1, lon1, lat2, lon2) / CONFIG.EARTH_RADIUS_KM;
+            const rLat1 = lat1*Math.PI/180, rLon1 = lon1*Math.PI/180, rLat2 = lat2*Math.PI/180, rLon2 = lon2*Math.PI/180;
+            if (d < 0.0001) return [[lat1, lon1], [lat2, lon2]];
+            for (let i = 0; i <= numPoints; i++) {
+                const f = i/numPoints, A = Math.sin((1-f)*d)/Math.sin(d), B = Math.sin(f*d)/Math.sin(d);
+                const x = A*Math.cos(rLat1)*Math.cos(rLon1) + B*Math.cos(rLat2)*Math.cos(rLon2);
+                const y = A*Math.cos(rLat1)*Math.sin(rLon1) + B*Math.cos(rLat2)*Math.sin(rLon2);
+                const z = A*Math.sin(rLat1) + B*Math.sin(rLat2);
+                const lat = Math.atan2(z, Math.sqrt(x*x + y*y))*180/Math.PI;
+                let lon = Math.atan2(y, x)*180/Math.PI;
+                if (i > 0 && Math.abs(lon - points[i-1][1]) > 180) lon += (lon < points[i-1][1]) ? 360 : -360;
+                points.push([lat, lon]);
+            }
+            return points;
+        }
+        const worldBounds = L.latLngBounds(L.latLng(-89.98, -180), L.latLng(89.98, 180));
+
+        /*******************************************************
+         * 3. ROUTER
+         *******************************************************/
+        const app = document.getElementById('app');
+        
+        function navigate(hash) { SFX.init(); SFX.click(); window.location.hash = hash; }
+        window.addEventListener('hashchange', router); window.addEventListener('load', router);
+
+        function router() {
+            // Global cleanup
+            clearTimeout(typewriterTimeout);
+            clearInterval(globalTimerInterval);
+            
+            const hash = window.location.hash || '#';
+            app.innerHTML = ''; 
+            if (hash === '#') renderHome();
+            else if (hash === '#create') renderCreate();
+            else if (hash.startsWith('#g/')) renderPlay(hash.substring(3));
+            else renderHome();
+        }
+
+        /*******************************************************
+         * 4. HOME VIEW
+         *******************************************************/
+        function renderHome() {
+            app.innerHTML = `
+                <div class="min-h-[100dvh] flex flex-col items-start justify-center py-12 px-6 md:px-16 lg:px-24 max-w-7xl mx-auto w-full">
+                    <h1 class="font-inter-tight text-5xl md:text-8xl lg:text-9xl font-bold tracking-tighter uppercase leading-none mb-6 text-foreground shrink-0">
+                        Operation:<br><span class="text-accent">Payload.</span>
+                    </h1>
+                    
+                    <div id="briefing-container" class="text-muted-foreground text-sm md:text-base max-w-2xl mb-12 leading-relaxed font-mono min-h-[180px] md:min-h-[140px] typing-cursor shrink-0"></div>
+                    
+                    <div class="flex flex-col md:flex-row gap-8 w-full max-w-3xl opacity-0 transition-opacity duration-1000 shrink-0 pb-12" id="home-actions">
+                        <div class="flex-1 flex flex-col">
+                            <h2 class="font-mono text-sm tracking-widest uppercase text-muted-foreground mb-4">Terror Cell</h2>
+                            <button onclick="navigate('#create')" class="group relative inline-flex items-center justify-center font-inter font-semibold uppercase tracking-wider text-accent transition-all duration-150 active:translate-y-px py-3 border border-accent/20 bg-accent/5 hover:bg-accent/10">
+                                <span>Plant Payload</span>
+                                <span class="absolute bottom-0 left-0 h-0.5 w-full bg-accent origin-left transition-transform duration-150 scale-x-100 group-hover:scale-x-110"></span>
+                            </button>
+                        </div>
+                        <div class="hidden md:block w-px bg-border"></div>
+                        <div class="flex-1 flex flex-col">
+                            <h2 class="font-mono text-sm tracking-widest uppercase text-muted-foreground mb-4">Intel Agency</h2>
+                            <input type="text" id="join-link" placeholder="Paste intercept URL..." class="w-full h-12 bg-input border border-border px-4 text-foreground focus:border-accent focus:outline-none transition-colors duration-150 mb-3 font-mono text-sm">
+                            <button onclick="joinGame()" class="w-full uppercase tracking-wider font-semibold border border-border text-foreground px-6 py-3 transition-colors duration-150 hover:bg-foreground hover:text-background active:translate-y-px text-sm">
+                                Intercept Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const briefingText = "INCOMING TRANSMISSION... SECURE CHANNEL ESTABLISHED.\n\nCommander, the grid is volatile.\n\nIf you operate for the Rogue Cell: lock your coordinates, arm the payload, and share the telemetry to the agency so when they attempt to defuse that will activate the bomb haha.\n\nIf you command the Agency: input the intercepted link. We have to try to defuse as we can't sit and wait for the next blackmail. You will rely on orbital radar to triangulate the payload before detonation.\n\nMake your choice. Dismissed.";
+            const container = document.getElementById('briefing-container');
+            const actions = document.getElementById('home-actions');
+            let i = 0;
+
+            function typeWriter() {
+                if (i < briefingText.length) {
+                    const char = briefingText.charAt(i);
+                    container.innerHTML += (char === '\n') ? '<br>' : char;
+                    i++;
+                    if(i % 3 === 0 && audioCtx) SFX.type(); 
+                    let speed = Math.random() * 10 + 2; // Super fast typing
+                    if (char === '.' || char === '?' || char === '!') speed += 150;
+                    if (char === ',') speed += 80;
+                    typewriterTimeout = setTimeout(typeWriter, speed);
+                } else {
+                    actions.classList.remove('opacity-0'); actions.classList.add('opacity-100');
+                }
+            }
+            setTimeout(typeWriter, 400);
+        }
+
+        window.joinGame = function() {
+            SFX.init(); SFX.click();
+            const val = document.getElementById('join-link').value.trim();
+            if (val.includes('#g/')) {
+                window.location.hash = '#g/' + val.split('#g/')[1];
+            } else if (val) {
+                const jokes = [
+                    "Invalid intel. Did you just intercept my grandmother's grocery list, Agent?",
+                    "Orbital radar confirms: You just pasted total gibberish. Drop and give me twenty!",
+                    "That link is a bigger dud than your last performance review. Try again.",
+                    "Error 404: Bomb not found. Are you sure you're a real spy?",
+                    "Decryption failed. You can't triangulate a cat video, Agent.",
+                    "Signal degraded. This intel has less bits than a rusty spoon. Try a real link.",
+                    "Invalid link! Are you working for the enemy, or just typing with your elbows?",
+                    "Intel rejected. That's a negative, Ghost Rider.",
+                    "Decryption failed. Stop licking the keyboard, Agent.",
+                    "Invalid URL. The only thing bombing right now is your espionage career."
+                ];
+                alert(jokes[Math.floor(Math.random() * jokes.length)]);
+            }
+        }
+
+        /*******************************************************
+         * 5. CREATE GAME VIEW (P1)
+         *******************************************************/
+        function renderCreate() {
+            app.innerHTML = `
+                <div class="flex flex-col h-[100dvh] overflow-hidden">
+                    <!-- Top Bar -->
+                    <div class="px-6 py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
+                        <button onclick="navigate('#')" class="font-mono text-sm tracking-widest uppercase text-muted-foreground hover:text-foreground transition-colors">← Abort</button>
+                        <h2 class="font-inter-tight font-bold text-foreground tracking-tight uppercase">Deploy Payload</h2>
+                        <div class="w-16"></div>
+                    </div>
+                    
+                    <!-- Split Layout -->
+                    <div class="flex-grow flex flex-col md:flex-row min-h-0 relative">
+                        <!-- Map Container -->
+                        <div id="map-create" class="w-full h-1/2 md:h-full md:flex-grow z-0 cursor-crosshair shrink-0 md:shrink"></div>
+                        
+                        <!-- Control Panel -->
+                        <div class="w-full h-1/2 md:w-[420px] md:h-full bg-background flex flex-col z-10 md:border-l border-border shrink-0 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] md:shadow-none">
+                            <div class="p-6 overflow-y-auto flex-grow">
+                                <h3 class="font-inter-tight text-2xl font-bold mb-6 text-foreground tracking-tight uppercase">Parameters</h3>
+                                <div class="mb-4">
+                                    <label class="block font-mono text-xs text-muted-foreground mb-2 uppercase tracking-widest">Terror Callsign</label>
+                                    <input type="text" id="p1-name" placeholder="e.g. ALPHA" class="w-full h-12 bg-input border border-border px-4 text-foreground focus:border-accent focus:outline-none transition-colors duration-150 font-mono">
+                                </div>
+                                <div class="mb-6">
+                                    <label class="block font-mono text-xs text-muted-foreground mb-2 uppercase tracking-widest">Threat Level</label>
+                                    <select id="p1-threat" class="w-full h-12 bg-input border border-border px-4 text-foreground focus:border-accent focus:outline-none appearance-none font-mono transition-colors duration-150">
+                                        <option value="EASY">${CONFIG.THREATS.EASY.label}</option>
+                                        <option value="NORMAL" selected>${CONFIG.THREATS.NORMAL.label}</option>
+                                        <option value="HARDCORE">${CONFIG.THREATS.HARDCORE.label}</option>
+                                    </select>
+                                </div>
+                                <div id="selection-status" class="text-sm font-mono text-muted-foreground p-4 border border-border bg-input">
+                                    AWAITING COORDINATES...<br>Click map to arm payload.
+                                </div>
+                            </div>
+                            <button id="generate-btn" disabled class="w-full uppercase tracking-wider font-semibold border-t border-accent bg-background text-accent px-6 py-5 transition-colors duration-150 hover:bg-accent hover:text-background active:translate-y-px disabled:border-border disabled:text-muted-foreground disabled:hover:bg-transparent disabled:active:translate-y-0 shrink-0">
+                                Encrypt Intel
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Share Overlay -->
+                    <div id="share-overlay" class="hidden absolute inset-0 bg-background/95 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+                        <div class="max-w-xl w-full p-10 border border-border bg-card shadow-2xl">
+                            <h3 class="font-inter-tight text-4xl font-bold mb-2 text-accent uppercase tracking-tight">Armed & Ready</h3>
+                            <p class="font-mono text-sm text-muted-foreground mb-8">Transmit this secure link to the agency.</p>
+                            <input type="text" id="share-url" readonly class="w-full h-12 bg-input border border-border px-4 text-xs text-muted-foreground mb-6 select-all font-mono focus:outline-none focus:border-accent">
+                            <div class="flex flex-col sm:flex-row gap-4">
+                                <button onclick="copyShareLink()" class="flex-1 uppercase tracking-wider font-semibold bg-foreground text-background px-6 py-3 transition-transform duration-150 active:translate-y-px text-sm">Copy URL</button>
+                                <button onclick="navigate('#')" class="uppercase tracking-wider font-semibold border border-border text-muted-foreground px-6 py-3 hover:text-foreground active:translate-y-px text-sm">Return Base</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const map = L.map('map-create', { center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 19, zoomControl: true, maxBounds: worldBounds, maxBoundsViscosity: 1.0 });
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 19, noWrap: true }).addTo(map);
+            setTimeout(() => map.invalidateSize(), 150);
+
+            let exactPoint = null, radiusCircle = null, selectedLat = null, selectedLng = null;
+
+            map.on('click', function(e) {
+                SFX.click();
+                selectedLat = e.latlng.lat; selectedLng = e.latlng.lng;
+                if (exactPoint) map.removeLayer(exactPoint);
+                if (radiusCircle) map.removeLayer(radiusCircle);
+                
+                exactPoint = L.circleMarker([selectedLat, selectedLng], { radius: 3, fillColor: "#FF3D00", color: "#0A0A0A", weight: 1, opacity: 1, fillOpacity: 1 }).addTo(map);
+                const threatKey = document.getElementById('p1-threat').value;
+                const defKm = CONFIG.THREATS[threatKey].defuseKm;
+                
+                radiusCircle = L.circle([selectedLat, selectedLng], { radius: defKm * 1000, color: "#262626", weight: 1, fillOpacity: 0.1, dashArray: "4, 4" }).addTo(map);
+                document.getElementById('selection-status').innerHTML = `<span class="text-accent">PAYLOAD ARMED.</span><br>${defKm}km defusal zone visualized.`;
+                checkForm();
+            });
+
+            document.getElementById('p1-threat').addEventListener('change', (e) => { SFX.click(); if(selectedLat) map.fireEvent('click', {latlng: {lat: selectedLat, lng: selectedLng}}); });
+            document.getElementById('p1-name').addEventListener('input', checkForm);
+            
+            function checkForm() {
+                const name = document.getElementById('p1-name').value.trim();
+                const btn = document.getElementById('generate-btn');
+                if (name && selectedLat !== null) btn.removeAttribute('disabled');
+                else btn.setAttribute('disabled', 'true');
+            }
+
+            document.getElementById('generate-btn').addEventListener('click', async () => {
+                SFX.click();
+                const payload = { v: 2, lat: selectedLat, lng: selectedLng, name: document.getElementById('p1-name').value.trim(), threat: document.getElementById('p1-threat').value };
+                try {
+                    const token = await encryptPayload(payload);
+                    document.getElementById('share-url').value = `${window.location.href.split('#')[0]}#g/${token}`;
+                    document.getElementById('share-overlay').classList.remove('hidden');
+                } catch(e) { console.error(e); }
+            });
+
+            window.copyShareLink = function() {
+                SFX.click();
+                const urlInput = document.getElementById('share-url'); urlInput.select(); document.execCommand('copy'); alert("URL copied to clipboard.");
+            }
+        }
+
+        /*******************************************************
+         * 6. PLAY GAME VIEW (P2)
+         *******************************************************/
+        async function renderPlay(token) {
+            app.innerHTML = `<div class="flex items-center justify-center h-[100dvh]"><div class="font-mono text-muted-foreground animate-pulse tracking-widest text-sm">DECRYPTING INTEL...</div></div>`;
+            
+            let gameData;
+            try {
+                gameData = await decryptPayload(token);
+                if (!gameData.name || !gameData.threat) throw new Error("Invalid format");
+            } catch(e) {
+                app.innerHTML = `<div class="flex items-center justify-center h-[100dvh] p-6"><div class="max-w-md w-full p-10 border border-border bg-card text-left"><h2 class="font-inter-tight text-3xl font-bold mb-4 text-accent uppercase">Fatal Error</h2><p class="font-mono text-sm text-muted-foreground mb-8">The intel package is corrupted.</p><button onclick="navigate('#')" class="uppercase tracking-wider font-semibold border border-border text-foreground px-6 py-3 hover:bg-foreground hover:text-background text-sm">Return Base</button></div></div>`;
+                return;
+            }
+
+            const T_RULES = CONFIG.THREATS[gameData.threat];
+            const gameState = { guesses: [], maxAttempts: T_RULES.attempts, secret: { lat: gameData.lat, lng: gameData.lng }, finished: false };
+            let triangulationsLeft = T_RULES.superScans; let triangulationArmed = false;
+            let timeRemaining = T_RULES.timeSec;
+
+            app.innerHTML = `
+                <div class="flex flex-col h-[100dvh] overflow-hidden">
+                    <!-- Top Bar -->
+                    <div class="px-6 py-4 border-b border-border flex justify-between items-center bg-background z-10 shrink-0 shadow-md">
+                        <h2 class="font-inter-tight font-bold text-muted-foreground tracking-tight uppercase">CELL: <span class="text-foreground">${gameData.name}</span></h2>
+                        <div class="font-mono text-sm font-bold tracking-widest flex gap-4 md:gap-6">
+                            <span class="text-accent" id="countdown-timer">T-${timeRemaining}s</span>
+                            <span class="text-muted-foreground hidden md:inline">SCANS: <span id="attempts-left" class="text-foreground">${gameState.maxAttempts}</span></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Split Layout -->
+                    <div class="flex-grow flex flex-col md:flex-row min-h-0 relative">
+                        <!-- Map Container -->
+                        <div id="map-play" class="w-full h-1/2 md:h-full md:flex-grow z-0 cursor-crosshair shrink-0 md:shrink"></div>
+                        
+                        <!-- Toast (Responsive Position) -->
+                        <div id="toast" class="absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 opacity-0 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap"></div>
+
+                        <!-- Telemetry Panel -->
+                        <div class="w-full h-1/2 md:w-[420px] md:h-full bg-background flex flex-col z-10 md:border-l border-border shrink-0 shadow-[0_-10px_30px_rgba(0,0,0,0.5)] md:shadow-none">
+                            <div class="p-4 border-b border-border bg-background shrink-0">
+                                <button id="triangulate-btn" class="w-full uppercase tracking-wider font-semibold border border-accent text-accent px-4 py-3 text-xs transition-colors duration-150 hover:bg-accent hover:text-background active:translate-y-px">
+                                    DEPLOY TRIANGULATION [${triangulationsLeft} LEFT]
+                                </button>
+                            </div>
+                            <div id="history-panel" class="flex-grow overflow-y-auto p-6 space-y-0 relative">
+                                <div id="status-container"></div>
+                                <p id="awaiting-text" class="font-mono text-xs text-muted-foreground text-left mt-2 uppercase tracking-widest leading-relaxed">
+                                    ${T_RULES.label}<br>DEFUSE RADIUS: &le; ${T_RULES.defuseKm} KM<br>AWAITING SCAN.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- HUD Overlay -->
+                        <div id="hud-overlay" class="hidden absolute inset-0 bg-background/50 backdrop-blur-[2px] z-[60] flex items-center justify-center pointer-events-none">
+                            <div class="flex flex-col items-center gap-4">
+                                <div class="w-16 h-16 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
+                                <p id="hud-text" class="font-mono text-sm text-accent tracking-widest uppercase font-bold bg-background/90 px-4 py-2 border border-accent">TRANSMITTING PING...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            const map = L.map('map-play', { center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 19, zoomControl: true, maxBounds: worldBounds, maxBoundsViscosity: 1.0 });
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 19, noWrap: true }).addTo(map);
+            setTimeout(() => map.invalidateSize(), 150);
+
+            let resultLayer = L.layerGroup().addTo(map);
+
+            function showToast(msg, type = "normal") {
+                const t = document.getElementById('toast');
+                t.innerHTML = msg;
+                if(type === "super") t.className = `absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap bg-accent text-background border-accent`;
+                else if (type === "warning") t.className = `absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap bg-warning text-background border-warning`;
+                else t.className = `absolute top-4 right-1/2 translate-x-1/2 md:translate-x-0 md:right-8 md:left-auto px-6 py-3 transition-opacity duration-150 pointer-events-none z-[70] font-mono text-sm tracking-widest shadow-2xl uppercase font-bold text-nowrap bg-muted text-foreground border-border`;
+                t.style.opacity = '1'; setTimeout(() => t.style.opacity = '0', 2500);
+            }
+
+            // Centralized strict timer logic
+            globalTimerInterval = setInterval(() => {
+                if(gameState.finished) { clearInterval(globalTimerInterval); return; }
+                
+                timeRemaining--;
+                const tmr = document.getElementById('countdown-timer');
+                tmr.innerText = `T-${timeRemaining}s`;
+                
+                if(timeRemaining <= 10 && timeRemaining > 0) { tmr.classList.replace('text-accent', 'text-detonated'); SFX.click(); }
+                
+                if (timeRemaining <= 0) {
+                    clearInterval(globalTimerInterval);
+                    endGame(false, getBestDistance(), "TIME EXPIRED");
+                }
+            }, 1000);
+
+            document.getElementById('triangulate-btn').addEventListener('click', (e) => {
+                SFX.click();
+                if (triangulationsLeft > 0 && !gameState.finished) {
+                    triangulationArmed = true;
+                    e.target.innerText = "ARMED: SELECT MAP TARGET";
+                    e.target.classList.add('bg-accent', 'text-background'); e.target.classList.remove('text-accent', 'hover:bg-accent', 'hover:text-background');
+                }
+            });
+
+            map.on('click', function(e) {
+                if (gameState.finished) return;
+                
+                const gLat = e.latlng.lat; const gLng = e.latlng.lng;
+                const trueDist = greatCircleDistanceKm(gLat, gLng, gameState.secret.lat, gameState.secret.lng);
+                const latencyMs = Math.round(CONFIG.LATENCY_BASE_MS + (trueDist * CONFIG.LATENCY_PER_KM_MS));
+                
+                const hud = document.getElementById('hud-overlay');
+                document.getElementById('hud-text').innerText = `TRANSMITTING PING... EST ${latencyMs}ms`;
+                hud.classList.remove('hidden');
+                SFX.ping();
+
+                setTimeout(() => {
+                    hud.classList.add('hidden');
+                    processGuess(gLat, gLng, trueDist);
+                }, latencyMs);
+            });
+
+            function processGuess(gLat, gLng, trueDist) {
+                if (gameState.finished) return; // strict guard
+
+                let isSuperScan = triangulationArmed; triangulationArmed = false; 
+                if (isSuperScan) triangulationsLeft--;
+
+                const isDegraded = trueDist > CONFIG.HEMISPHERE_THRESHOLD_KM;
+                let activeNoise = T_RULES.noisePct * (isDegraded ? CONFIG.HEMISPHERE_NOISE_MULT : 1);
+                let noisyDist = Math.max(0, trueDist + ((Math.random() * 2 - 1) * (trueDist * activeNoise))); 
+
+                let comparison = "---"; let isDefused = trueDist <= T_RULES.defuseKm; 
+                if (gameState.guesses.length > 0) {
+                    const prevDist = gameState.guesses[gameState.guesses.length-1].trueDist;
+                    if (trueDist < prevDist) comparison = "CLOSER"; else if (trueDist > prevDist) comparison = "FARTHER";
+                }
+
+                gameState.guesses.push({ lat: gLat, lng: gLng, trueDist: trueDist, displayedDist: noisyDist, comparison, isDefused, isDegraded });
+                L.circleMarker([gLat, gLng], { radius: 2, fillColor: isSuperScan ? "#FF3D00" : "#FAFAFA", color: "#0A0A0A", weight: 1, fillOpacity: 1 }).addTo(map);
+
+                if (isDegraded) { SFX.click(); showToast(`DEGRADED SIGNAL: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "warning"); }
+                else if (isSuperScan) {
+                    let radar = L.circle([gLat, gLng], { radius: noisyDist * 1000, color: "#FF3D00", weight: 2, fillColor: "#FF3D00", fillOpacity: 0.08, dashArray: "4, 8" }).addTo(map);
+                    SFX.superScan(); showToast(`SUPER SCAN: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "super");
+                    setTimeout(() => { if(map.hasLayer(radar)) map.removeLayer(radar); }, T_RULES.superFadeMs);
+                } else {
+                    SFX.click(); showToast(`SCAN: ${noisyDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM`, "normal");
+                }
+
+                updateGameUI();
+            }
+
+            function updateGameUI() {
+                if (gameState.finished) return;
+
+                const historyEl = document.getElementById('history-panel');
+                const awaitText = document.getElementById('awaiting-text');
+                if (awaitText) awaitText.style.display = 'none';
+                document.getElementById('attempts-left').innerText = gameState.maxAttempts - gameState.guesses.length;
+                
+                const tBtn = document.getElementById('triangulate-btn');
+                if (triangulationsLeft > 0) {
+                    tBtn.className = "w-full uppercase tracking-wider font-semibold border border-accent text-accent px-4 py-3 text-xs transition-colors duration-150 hover:bg-accent hover:text-background active:translate-y-px";
+                    tBtn.innerText = `DEPLOY TRIANGULATION [${triangulationsLeft} LEFT]`;
+                } else {
+                    tBtn.disabled = true; tBtn.className = "w-full uppercase tracking-wider font-semibold border border-border text-muted-foreground px-4 py-3 text-xs opacity-50";
+                    tBtn.innerText = `TRIANGULATIONS DEPLETED`;
+                }
+                
+                const latest = gameState.guesses[gameState.guesses.length - 1];
+                const index = String(gameState.guesses.length).padStart(2, '0');
+                const row = document.createElement('div');
+                row.className = "py-4 border-b border-border flex justify-between items-end font-mono text-sm";
+                row.innerHTML = `
+                    <div class="flex flex-col gap-1">
+                        <span class="text-xs ${latest.isDegraded ? 'text-warning' : 'text-muted-foreground'} tracking-widest">SCAN ${index} ${latest.isDegraded ? '[DEGRADED]' : ''}</span>
+                        <span class="text-foreground text-lg">~${latest.displayedDist.toLocaleString(undefined, {maximumFractionDigits:0})} KM</span>
+                    </div>
+                    <span class="font-bold tracking-widest ${latest.isDefused ? 'text-defused' : 'text-muted-foreground'}">${latest.comparison}</span>
+                `;
+                document.getElementById('status-container').after(row);
+                historyEl.scrollTop = 0; 
+
+                // Strict end condition check
+                if (latest.isDefused) endGame(true, latest.trueDist, "TARGET SECURED");
+                else if (gameState.guesses.length >= gameState.maxAttempts) endGame(false, getBestDistance(), "SCANS DEPLETED");
+            }
+
+            function getBestDistance() { return gameState.guesses.length === 0 ? 0 : Math.min(...gameState.guesses.map(g => g.trueDist)); }
+
+            function endGame(won, bestDist, reason) {
+                if (gameState.finished) return; // Idempotency guard
+                gameState.finished = true; 
+                clearInterval(globalTimerInterval);
+                
+                document.getElementById('triangulate-btn').disabled = true;
+                const flash = document.getElementById('flash-overlay');
+                
+                if (won) {
+                    SFX.success();
+                    flash.className = "pointer-events-none fixed inset-0 z-[100] transition-opacity duration-1000 bg-defused/30 opacity-100";
+                    setTimeout(() => flash.classList.replace('opacity-100', 'opacity-0'), 100);
+
+                    let pulse = L.circle([gameState.secret.lat, gameState.secret.lng], { radius: 1000, color: "#22c55e", weight: 3, fillColor: "#22c55e", fillOpacity: 0.6 }).addTo(resultLayer);
+                    let pRad = 1000; let pAnim = setInterval(() => {
+                        pRad += 1000; pulse.setRadius(pRad); pulse.setStyle({ opacity: Math.max(0, 1 - pRad/40000), fillOpacity: Math.max(0, 0.6 - pRad/40000) });
+                        if(pRad > 40000) clearInterval(pAnim);
+                    }, 30);
+
+                    document.getElementById('status-container').innerHTML = `
+                        <div class="mb-6 p-6 border border-defused bg-defused/10">
+                            <h2 class="font-inter-tight text-3xl font-bold mb-2 text-defused uppercase tracking-tighter leading-none">Payload Defused</h2>
+                            <p class="font-mono text-xs text-defused mb-6 uppercase tracking-widest leading-relaxed opacity-80">${reason}.<br>Threat neutralized in ${String(gameState.guesses.length).padStart(2, '0')} scans.</p>
+                            <button onclick="navigate('#')" class="w-full uppercase tracking-wider font-semibold bg-defused text-background px-4 py-3 active:translate-y-px text-xs hover:bg-white transition-colors">Return Base</button>
+                        </div>
+                    `;
+                } else {
+                    SFX.explode();
+                    flash.className = "pointer-events-none fixed inset-0 z-[100] transition-opacity duration-1000 bg-detonated/40 opacity-100";
+                    setTimeout(() => flash.classList.replace('opacity-100', 'opacity-0'), 100);
+
+                    let blast = L.circle([gameState.secret.lat, gameState.secret.lng], { radius: 1000, color: "#ef4444", weight: 0, fillColor: "#ef4444", fillOpacity: 0.8 }).addTo(resultLayer);
+                    let bRad = 1000; let bAnim = setInterval(() => {
+                        bRad += 20000; blast.setRadius(bRad); blast.setStyle({ fillOpacity: Math.max(0, 0.8 - bRad/1000000) });
+                        if(bRad > 1000000) clearInterval(bAnim);
+                    }, 30);
+
+                    L.circleMarker([gameState.secret.lat, gameState.secret.lng], { radius: 5, fillColor: "#ef4444", color: "#0A0A0A", weight: 2, fillOpacity: 1 }).addTo(resultLayer);
+
+                    document.getElementById('status-container').innerHTML = `
+                        <div class="mb-6 p-6 border border-detonated bg-detonated/10">
+                            <h2 class="font-inter-tight text-3xl font-bold mb-2 text-detonated uppercase tracking-tighter leading-none">Detonation</h2>
+                            <p class="font-mono text-xs text-detonated mb-6 uppercase tracking-widest leading-relaxed opacity-80">${reason}.<br>Best true distance: ${bestDist.toLocaleString(undefined, {maximumFractionDigits:1})} KM.</p>
+                            <button onclick="navigate('#')" class="w-full uppercase tracking-wider font-semibold bg-detonated text-background px-4 py-3 active:translate-y-px text-xs hover:bg-white transition-colors">Return Base</button>
+                        </div>
+                    `;
+                }
+
+                if (gameState.guesses.length > 0) {
+                    let bestGuess = gameState.guesses.reduce((prev, curr) => (prev.trueDist < curr.trueDist) ? prev : curr);
+                    let geoPoints = getGeodesicPoints(bestGuess.lat, bestGuess.lng, gameState.secret.lat, gameState.secret.lng);
+                    L.polyline(geoPoints, { color: won ? '#22c55e' : '#ef4444', dashArray: '4, 4', weight: 2, opacity: 0.8 }).addTo(resultLayer);
+                    map.fitBounds(L.latLngBounds([ [bestGuess.lat, bestGuess.lng], [gameState.secret.lat, gameState.secret.lng] ]), { padding: [30, 30], maxZoom: 10 });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
